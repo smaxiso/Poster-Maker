@@ -203,11 +203,13 @@ class PosterMakerApp:
             # Calculate estimated memory usage
             output_format = self.args.format or os.path.splitext(self.args.file)[1][1:]
             parts = self._get_parts_count()
+            grid = self._get_grid_tuple()
             memory_estimate = self.memory_service.estimate_memory_usage(
                 width, height,
                 parts,
                 self.args.dpi,
-                output_format
+                output_format,
+                grid
             )
 
             # Display warning and get user confirmation if needed
@@ -469,18 +471,22 @@ class PosterMakerApp:
                     if cleanup_info:
                         result["cleanup"] = cleanup_info
 
+            # Get log file path if available
+            log_file_path = None
+            log_setup = self.env.get("logger_setup")
+            if log_setup and hasattr(log_setup, "get_log_file_path"):
+                log_file_path = log_setup.get_log_file_path()
+
             # Display summary
             summary_level = getattr(self.args, 'summary_level', 'basic')
             save_summary = getattr(self.args, 'save_summary', False)
-            self.display_service.display_summary(result, summary_level, save_summary, pdf_result)
-
-            # Show log file location if verbose mode
-            if self.args.verbose:
-                log_path = self.env.get("logger_setup")
-                if log_path and hasattr(log_path, "get_log_file_path"):
-                    log_file = log_path.get_log_file_path()
-                    if log_file:
-                        print(f"\n📝 Log file: {log_file}")
+            self.display_service.display_summary(
+                result, 
+                summary_level, 
+                save_summary, 
+                pdf_result, 
+                log_file=log_file_path
+            )
 
             self.logger.info("Processing complete")
             return 0

@@ -889,6 +889,7 @@ class PDFService:
         """
         import platform
         import subprocess
+        import shutil
 
         try:
             if not os.path.exists(pdf_path):
@@ -896,7 +897,36 @@ class PDFService:
                 return
 
             system = platform.system()
-            if system == "Darwin":  # macOS
+            release = platform.release().lower()
+
+            # Check for WSL (Windows Subsystem for Linux)
+            is_wsl = "microsoft" in release or "wsl" in release
+
+            if is_wsl:
+                # Try wslview first (part of wslu utility)
+                if shutil.which("wslview"):
+                    subprocess.run(["wslview", pdf_path], check=True)
+                    self.logger.info(f"Opened PDF in Windows (via wslview): {pdf_path}")
+                # Fallback to explorer.exe if accessible
+                elif shutil.which("explorer.exe"):
+                    # Convert path to Windows format if needed, but explorer usually handles Linux paths in WSL2
+                    # using the \\wsl$\... convention, or we can just pass the path relative to current dir
+                    # simpler approach: use powershell to start the process
+                    # or just call explorer.exe directly with the path converted to windows style
+                    # A reliable way is `explorer.exe .` to open folder, but for file:
+                    # `wslpath -w` converts linux path to windows path
+                    try:
+                        win_path = subprocess.check_output(["wslpath", "-w", pdf_path], text=True).strip()
+                        subprocess.run(["explorer.exe", win_path], check=True)
+                        self.logger.info(f"Opened PDF in Windows (via explorer.exe): {pdf_path}")
+                    except Exception as wsl_err:
+                        self.logger.warning(f"Failed to open with explorer.exe: {wsl_err}")
+                        # Final fallback to xdg-open in case user has a linux viewer installed in WSL
+                        subprocess.run(["xdg-open", pdf_path], check=True)
+                else:
+                    subprocess.run(["xdg-open", pdf_path], check=True)
+
+            elif system == "Darwin":  # macOS
                 subprocess.run(["open", pdf_path], check=True)
             elif system == "Windows":
                 os.startfile(pdf_path)  # type: ignore
@@ -904,7 +934,12 @@ class PDFService:
                 subprocess.run(["xdg-open", pdf_path], check=True)
 
             self.logger.info(f"Opened PDF file: {pdf_path}")
+
         except subprocess.CalledProcessError as e:
             self.logger.error(f"Failed to open PDF: {e}")
+            print(f"\n⚠️  Could not automatically open the PDF: {e}")
+            print(f"   Please open this file manually: {pdf_path}")
         except Exception as e:
             self.logger.error(f"Failed to open PDF: {str(e)}")
+            print(f"\n⚠️  Could not automatically open the PDF: {str(e)}")
+            print(f"   Please open this file manually: {pdf_path}")

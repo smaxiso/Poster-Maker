@@ -20,6 +20,8 @@ Poster Maker takes an input image and splits it into a configurable number of eq
 - Preserve previous outputs when generating new splits
 - Support for various output formats (PNG, JPG, etc.)
 - Comprehensive DPI selection guidelines
+
+- **Optimized Memory Usage**: Streaming generator processes large images part-by-part to prevent RAM spikes
 - Memory usage estimation and warnings
 - Progress tracking for long operations
 - Detailed processing summaries with size breakdowns
@@ -181,6 +183,10 @@ python main.py -f data/image/input/my_image.jpg -n 3 --generate-pdf --pdf-qualit
 # Open PDF after generation
 python main.py -f data/image/input/my_image.jpg -n 3 --generate-pdf --preview-pdf
 ```
+
+> **WSL Users:** To automatically open PDFs in Windows from WSL, install `wslu`:
+> `sudo apt install wslu`
+> This enables `wslview` which Poster Maker will use to launch your default Windows PDF viewer.
 
 ### Command Line Options
 
@@ -475,6 +481,7 @@ Main dependencies:
 - tqdm: Progress bar visualization
 - psutil: System memory monitoring
 - reportlab: PDF generation
+- rich: Beautiful terminal formatting
 
 See [requirements.txt](requirements.txt) for the complete list.
 

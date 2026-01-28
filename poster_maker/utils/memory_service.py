@@ -12,8 +12,8 @@ class MemoryService:
         self.logger = logger
 
     @staticmethod
-    def estimate_memory_usage(width: int, height: int, parts: int, dpi: int, output_format: str) -> Tuple[
-        float, Optional[float]]:
+    def estimate_memory_usage(width: int, height: int, parts: int, dpi: int, output_format: str, 
+                              grid: Optional[Tuple[int, int]] = None) -> Tuple[float, Optional[float]]:
         """
         Estimate maximum RAM usage during processing.
 
@@ -23,20 +23,32 @@ class MemoryService:
         Args:
             width: Source image width in pixels
             height: Source image height in pixels
-            parts: Number of parts to split into
+            parts: Total number of parts
             dpi: Output DPI
             output_format: Output format (affects memory calculation)
+            grid: Optional (rows, cols) tuple for grid layout
 
         Returns:
             Tuple[float, Optional[float]]: (estimated_memory_mb, memory_percentage_of_system)
         """
         # Calculate target dimensions
         a4_width_inches = 8.27
-        target_width = int(a4_width_inches * dpi * parts)
+        a4_height_inches = 11.69
+        
+        if grid:
+            rows, cols = grid
+            target_width = int(a4_width_inches * dpi * cols)
+            target_height = int(a4_height_inches * dpi * rows)
+        else:
+            # 1D strip mode (horizontal parts)
+            target_width = int(a4_width_inches * dpi * parts)
+            # Height will be scaled proportionally later
+            target_height = 0  # Placeholder
 
         # Calculate scaling factor
         scale_factor = target_width / width
-        target_height = int(height * scale_factor)
+        if target_height == 0:
+            target_height = int(height * scale_factor)
 
         # Calculate bytes per pixel (for in-memory representation)
         bytes_per_pixel = 4  # RGBA format is used internally
@@ -114,9 +126,14 @@ class MemoryService:
 
             # For very high memory usage, ask for confirmation
             if is_very_high_memory or (memory_percentage and memory_percentage > 70):
-                response = input("\nContinue with this high-memory operation? (y/n): ")
-                if response.lower() != 'y':
-                    print("Operation cancelled by user.")
-                    return False
+                while True:
+                    response = input("\nContinue with this high-memory operation? (y/n): ").strip().lower()
+                    if response == 'y':
+                        return True
+                    elif response == 'n':
+                        print("Operation cancelled by user.")
+                        return False
+                    # If empty or invalid, loop again
+                    print("Please enter 'y' to continue or 'n' to cancel.")
 
         return True

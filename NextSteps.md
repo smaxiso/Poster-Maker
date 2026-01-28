@@ -11,6 +11,7 @@ This document tracks implemented features and planned enhancements for Poster Ma
 2. **Interactive CLI Mode** — Guided experience with smart recommendations (`-i`)
 3. **PDF Generation** — Complete PDF with assembly instructions
 4. **Cleanup Options** — Auto-delete image parts after PDF generation
+5. **Memory Optimization** — Generator-based processing for low RAM usage
 
 ### ⏳ Planned Features
 

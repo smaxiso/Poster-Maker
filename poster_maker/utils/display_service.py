@@ -69,118 +69,96 @@ class DisplayService:
         print("=" * 80)
 
     def display_summary(self, result: Dict[str, Any], summary_level: str = 'basic',
-                        save_summary: bool = False, pdf_info: Dict[str, Any] = None) -> None:
+                        save_summary: bool = False, pdf_info: Dict[str, Any] = None,
+                        log_file: str = None) -> None:
         """
-        Display processing summary.
+        Display processing summary using Rich for nicer formatting.
 
         Args:
             result: Processing result
             summary_level: Level of detail to display ('minimal', 'basic', 'detailed')
             save_summary: Whether to save the summary as a JSON file
             pdf_info: Information about generated PDF (if applicable)
+            log_file: Path to the log file (optional)
         """
+        # Try importing rich, fall back to basic print if not available
+        try:
+            from rich.console import Console
+            from rich.table import Table
+            from rich.panel import Panel
+            from rich.text import Text
+            from rich import box
+            console = Console()
+            has_rich = True
+        except ImportError:
+            has_rich = False
+            
         output_paths = result["output_paths"]
         summary = result["summary"]
-
-        # Check if cleanup was performed
         cleanup_info = result.get("cleanup", {})
-        parts_cleaned = cleanup_info.get("parts_deleted", 0) > 0
-        resized_cleaned = cleanup_info.get("resized_deleted", False)
-
-        # Log completion info with cleanup status
+        
+        # Log internal completion info
         self.logger.info(f"Successfully created {len(output_paths['parts'])} poster parts")
-        if resized_cleaned:
-            self.logger.info(f"Resized image was cleaned up (originally: {output_paths['resized']})")
-        else:
-            self.logger.info(f"Resized image saved to: {output_paths['resized']}")
-        if parts_cleaned:
-            self.logger.info(f"Poster parts were cleaned up (originally in: {os.path.dirname(output_paths['parts'][0])})")
-        else:
-            self.logger.info(f"Poster parts saved to: {os.path.dirname(output_paths['parts'][0])}")
+        
+        # Calculate sizes
+        resized_size = summary['output']['resized_image']['size_bytes']
+        parts_size = sum(part['size_bytes'] for part in summary['output']['parts'])
+        pdf_size = pdf_info.get('size_bytes', 0) if pdf_info else 0
+        total_time = summary['timing'].get('total_seconds', 0)
 
-        # Calculate total sizes including PDF if available
-        resized_size_bytes = summary['output']['resized_image']['size_bytes']
-        parts_size_bytes = sum(part['size_bytes'] for part in summary['output']['parts'])
-        pdf_size_bytes = pdf_info.get('size_bytes', 0) if pdf_info else 0
+        if not has_rich:
+            # Fallback for systems without rich
+            print("\n" + "=" * 80)
+            print(f"PROCESSING COMPLETE ({total_time:.2f}s)")
+            print("=" * 80)
+            if pdf_info:
+                print(f"PDF Output: {pdf_info['path']} ({self.format_size(pdf_size)})")
+            if log_file:
+                print(f"Log File: {log_file}")
+            return
 
-        # Calculate total combined output size (only what remains after cleanup)
-        if parts_cleaned:
-            remaining_parts_size = 0
-        else:
-            remaining_parts_size = parts_size_bytes
+        # Create Main Summary Table
+        table = Table(box=box.ROUNDED, show_header=False, expand=True, border_style="blue")
+        table.add_column("Key", style="cyan", width=20)
+        table.add_column("Value", style="white")
 
-        if resized_cleaned:
-            remaining_resized_size = 0
-        else:
-            remaining_resized_size = resized_size_bytes
+        # 1. Processing Stats
+        table.add_row("Source Image", f"{summary['source_image']['path']}")
+        table.add_row("Resolution", f"{summary['source_image']['dimensions']['width']}x{summary['source_image']['dimensions']['height']} px")
+        table.add_row("Output Layout", f"{len(summary['output']['parts'])} parts @ {summary['process_options']['dpi']} DPI")
+        table.add_row("Processing Time", f"[bold green]{total_time:.2f} seconds[/bold green]")
+        
+        table.add_section()
 
-        total_output_size_bytes = remaining_resized_size + remaining_parts_size + pdf_size_bytes
-
-        # Human-readable summary always shown
-        print("\n" + "=" * 80)
-        print("PROCESSING COMPLETE")
-        print("=" * 80)
-        print(f"Source image: {summary['source_image']['dimensions']['width']}x"
-              f"{summary['source_image']['dimensions']['height']} pixels "
-              f"({self.format_size(summary['source_image']['size_bytes'])})")
-        print(f"Output: {len(summary['output']['parts'])} poster parts at {summary['process_options']['dpi']} DPI")
-
-        # Print detailed size breakdown
-        print("\nOutput Size Breakdown:")
-        if resized_cleaned:
-            print(f"  • Resized image: {self.format_size(resized_size_bytes)} (deleted)")
-        else:
-            print(f"  • Resized image: {self.format_size(resized_size_bytes)}")
-
-        if parts_cleaned:
-            print(f"  • Image parts: {self.format_size(parts_size_bytes)} (deleted - {len(summary['output']['parts'])} files)")
-        else:
-            print(f"  • Image parts: {self.format_size(parts_size_bytes)} (across {len(summary['output']['parts'])} files)")
-
+        # 2. Output Files
         if pdf_info:
-            print(f"  • PDF document: {self.format_size(pdf_size_bytes)} ({pdf_info['pages']} pages)")
+            pdf_path = pdf_info['path']
+            # Highlight the PDF path as it's the main artifact
+            table.add_row("PDF Output", f"[bold yellow]{pdf_path}[/bold yellow] ({self.format_size(pdf_size)})")
+        
+        if not cleanup_info.get("parts_deleted"):
+             parts_dir = os.path.dirname(output_paths['parts'][0])
+             table.add_row("Image Parts", f"{parts_dir}")
 
-        # Show total remaining output
-        if parts_cleaned or resized_cleaned:
-            print(f"  • Total remaining: {self.format_size(total_output_size_bytes)}")
-        else:
-            print(f"  • Total output: {self.format_size(total_output_size_bytes)}")
-        print(f"\nProcessing time: {summary['timing']['total_seconds']:.2f} seconds")
+        # 3. Cleanup Info
+        if cleanup_info.get("parts_deleted", 0) > 0:
+             freed = cleanup_info.get("bytes_freed", 0)
+             table.add_row("Cleanup", f"[dim]Deleted intermediate files ({self.format_size(freed)} freed)[/dim]")
 
-        # Add PDF information to summary if provided
-        if pdf_info:
-            # Include PDF info in the summary
-            summary["pdf_output"] = pdf_info
+        # 4. Log File
+        if log_file:
+             table.add_section()
+             table.add_row("Log File", f"[dim]{log_file}[/dim]")
 
-        # Show detailed summary based on level
-        if summary_level in ['basic', 'detailed']:
-            print("\nSUMMARY:")
-
-            if summary_level == 'basic':
-                # Show simplified summary of image parts
-                print("Image Parts:")
-                for i, part in enumerate(summary['output']['parts']):
-                    print(f"  Part {i + 1}: {part['dimensions']['width']}x{part['dimensions']['height']} "
-                          f"pixels ({self.format_size(part['size_bytes'])})")
-
-                # If PDF was generated, show basic PDF info
-                if pdf_info:
-                    print("\nPDF Output:")
-                    print(f"  File: {pdf_info['path']}")
-                    print(f"  Size: {self.format_size(pdf_info['size_bytes'])}")
-                    print(f"  Pages: {pdf_info['pages']}")
-                    if 'features' in pdf_info and pdf_info['features']:
-                        print(f"  Features: {', '.join(pdf_info['features'])}")
-
-                    # Show compression info if available
-                    if 'optimization' in pdf_info and pdf_info['optimization'].get('compress_images'):
-                        print(f"  Compression: Quality {pdf_info['optimization']['compression_quality']}%")
-                        if pdf_info['optimization'].get('downsample_images'):
-                            print(f"  Downsampling: To {pdf_info['optimization']['downsample_resolution_dpi']} DPI")
-
-            elif summary_level == 'detailed':
-                # Show detailed JSON summary
-                print(json.dumps(summary, indent=2))
+        # Print the panel
+        console.print()
+        console.print(Panel(
+            table,
+            title="[bold blue]🖼️  Poster Maker - Execution Summary[/bold blue]",
+            border_style="blue",
+            expand=False
+        ))
+        console.print()
 
         # Save summary file if requested
         if save_summary:
@@ -191,3 +169,5 @@ class DisplayService:
             with open(summary_file, 'w') as f:
                 json.dump(summary, f, indent=2)
             self.logger.info(f"Summary saved to: {summary_file}")
+            console.print(f"[dim]JSON summary saved to: {summary_file}[/dim]")
+            console.print()

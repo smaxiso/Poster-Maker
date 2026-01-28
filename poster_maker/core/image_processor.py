@@ -88,6 +88,10 @@ class ImageProcessor:
         Resize an image to target dimensions based on specified mode with interactive progress bar.
         """
         start_time = time.time()
+        if verbose:
+             import sys
+             print(f"Resizing image to {target_width}x{target_height}...", flush=True)
+
         self.logger.info(
             f"Resizing image from {img.width}x{img.height} to {target_width}x{target_height} (mode: {resize_mode})")
 
@@ -185,26 +189,28 @@ class ImageProcessor:
     def split_and_save_parts(
         self,
         img_resized: Image.Image,
-        split_parts: List[Tuple[Image.Image, Tuple[int, int, int, int]]],
+        split_parts_generator: Any,  # Iterator[Tuple[Image.Image, Tuple[int...]]]
+        total_parts: int,
         filename: str,
         posters_dir: str,
         ext: str,
         output_format: Optional[str] = None,
         verbose: bool = False,
-    ) -> List[str]:
+    ) -> Tuple[List[str], List[Tuple[int, int, int, int]]]:
         """
-        Split image and save parts with optional progress bar based on verbose flag.
+        Split image and save parts with optional progress bar.
+        Consumes the generator one by one to save memory.
 
         Returns:
-            List of output file paths for the saved part images.
+            Tuple[List[str], List[Tuple[int, int, int, int]]]: (output_paths, crop_boxes)
         """
         output_paths: List[str] = []
-        total_parts = len(split_parts)
+        crop_boxes: List[Tuple[int, int, int, int]] = []
 
         if verbose:
-            # Progress bar: count parts (avoids misleading GB from uncompressed pixel bytes)
+            # Progress bar
             with tqdm(total=total_parts, desc="Creating poster parts", unit="part") as pbar:
-                for i, (part, box) in enumerate(split_parts, 1):
+                for i, (part, box) in enumerate(split_parts_generator, 1):
                     pbar.set_description(f"Creating part {i}/{total_parts}")
 
                     output_path = self.file_manager.get_output_path(
@@ -214,12 +220,17 @@ class ImageProcessor:
                     self._save_image_optimized(part, output_path)
                     pbar.update(1)
                     output_paths.append(output_path)
+                    crop_boxes.append(box)
 
                     # Log info but don't display on console during progress
                     self.logger.info(f"Saved part {i}/{total_parts}: {output_path} ({part.width}x{part.height} pixels)")
+                    
+                    # Explicitly close and delete the part to free memory immediately
+                    part.close()
+                    del part
         else:
             # No progress bar when not in verbose mode
-            for i, (part, box) in enumerate(split_parts, 1):
+            for i, (part, box) in enumerate(split_parts_generator, 1):
                 output_path = self.file_manager.get_output_path(
                     posters_dir, filename, part=i, ext=ext, output_format=output_format
                 )
@@ -227,12 +238,17 @@ class ImageProcessor:
                 # Save the part with optimized settings
                 self._save_image_optimized(part, output_path)
                 output_paths.append(output_path)
+                crop_boxes.append(box)
 
                 # Log with print since not in verbose mode
                 self.logger.info(f"Saved part {i}/{total_parts}: {output_path} ({part.width}x{part.height} pixels)")
                 print(f"Saved part {i}/{total_parts}: {output_path}")
+                
+                # Explicitly close and delete
+                part.close()
+                del part
 
-        return output_paths
+        return output_paths, crop_boxes
 
     def process_image(
         self,
@@ -370,18 +386,23 @@ class ImageProcessor:
 
         # Split the image and save each part with progress bar
         split_start = time.time()
+        
+        # Determine total parts count for progress bar
         if grid:
-            self.logger.info(f"Splitting image into {grid[0]}×{grid[1]} grid ({parts} parts)")
-            split_parts = self.split_image_to_grid(img_resized, grid[0], grid[1])
+            total_parts = grid[0] * grid[1]
+            self.logger.info(f"Splitting image into {grid[0]}×{grid[1]} grid ({total_parts} parts)")
+            split_parts_generator = self.split_image_to_grid(img_resized, grid[0], grid[1])
         else:
-            self.logger.info(f"Splitting image into {parts} parts")
-            split_parts = self.split_image_to_parts(img_resized, parts)
+            total_parts = parts
+            self.logger.info(f"Splitting image into {total_parts} parts")
+            split_parts_generator = self.split_image_to_parts(img_resized, parts)
+            
         summary["timing"]["split_calculation_seconds"] = round(time.time() - split_start, 2)
 
         # Use the improved split and save function
         save_start = time.time()
-        output_paths["parts"] = self.split_and_save_parts(
-            img_resized, split_parts, filename, posters_dir, ext, output_format, verbose
+        output_paths["parts"], crop_boxes = self.split_and_save_parts(
+            img_resized, split_parts_generator, total_parts, filename, posters_dir, ext, output_format, verbose
         )
         summary["timing"]["save_parts_seconds"] = round(time.time() - save_start, 2)
 
@@ -390,8 +411,10 @@ class ImageProcessor:
         part_sizes_bytes = 0
 
         for i, path in enumerate(output_paths["parts"], 1):
-            part = split_parts[i - 1][0]  # Get the image part
-            box = split_parts[i - 1][1]  # Get the crop box
+            box = crop_boxes[i - 1]
+            width_px = box[2] - box[0]
+            height_px = box[3] - box[1]
+            
             file_size = os.path.getsize(path)
             part_sizes_bytes += file_size
 
@@ -400,8 +423,8 @@ class ImageProcessor:
                 "part_number": i,
                 "path": path,
                 "dimensions": {
-                    "width": part.width,
-                    "height": part.height
+                    "width": width_px,
+                    "height": height_px
                 },
                 "size_bytes": file_size,
                 "crop_box": box
@@ -424,22 +447,19 @@ class ImageProcessor:
             "summary": summary
         }
 
-    def split_image_to_parts(self, img: Image.Image, parts: int) -> List[Tuple[Image.Image, Tuple[int, int, int, int]]]:
+    def split_image_to_parts(self, img: Image.Image, parts: int):
         """
-        Split an image into parts.
+        Split an image into parts (generator).
 
         Args:
             img: PIL Image object to split
             parts: Number of parts to split into
 
-        Returns:
-            List[Tuple[Image.Image, Tuple[int, int, int, int]]]: List of (image_part, (left, upper, right, lower))
+        Yields:
+             Tuple[Image.Image, Tuple[int, int, int, int]]: (image_part, (left, upper, right, lower))
         """
         width, height = img.size
         horizontal_split = width > height
-
-        # Calculate dimensions for each part
-        result_parts = []
 
         if horizontal_split:
             self.logger.info(f"Splitting horizontally into {parts} parts")
@@ -452,11 +472,16 @@ class ImageProcessor:
                 right = (i + 1) * part_width if i < parts - 1 else width
                 box = (left, 0, right, part_height)
 
+                # Crop only when needed
                 part = img.crop(box)
+                # Force load the data so it's a real image in memory, 
+                # allowing the crop operation to be isolated
+                part.load()
+                
                 if abs(part.width - part_width) > 1:
                     self.logger.warning(f"Part {i + 1} has different width: {part.width}px vs expected {part_width}px")
 
-                result_parts.append((part, box))
+                yield part, box
         else:
             self.logger.info(f"Splitting vertically into {parts} parts")
             part_width = width
@@ -469,28 +494,25 @@ class ImageProcessor:
                 box = (0, top, part_width, bottom)
 
                 part = img.crop(box)
+                # Force load
+                part.load()
+
                 if abs(part.height - part_height) > 1:
                     self.logger.warning(
                         f"Part {i + 1} has different height: {part.height}px vs expected {part_height}px")
 
-                result_parts.append((part, box))
+                yield part, box
 
-        return result_parts
-
-    def split_image_to_grid(
-        self, img: Image.Image, rows: int, cols: int
-    ) -> List[Tuple[Image.Image, Tuple[int, int, int, int]]]:
+    def split_image_to_grid(self, img: Image.Image, rows: int, cols: int):
         """
-        Split an image into a rows×cols grid. Parts are returned in row-major order
-        (top row left-to-right, then next row, etc.), numbered 1..rows*cols.
+        Split an image into a rows×cols grid (generator).
 
-        Returns:
-            List of (image_part, (left, upper, right, lower)) in reading order.
+        Yields:
+            Tuple[Image.Image, Tuple[int, int, int, int]]: (image_part, crop_box) in reading order.
         """
         width, height = img.size
         cell_w = width // cols
         cell_h = height // rows
-        result_parts = []
         self.logger.info(f"Splitting into {rows}×{cols} grid ({rows * cols} parts)")
 
         for row in range(rows):
@@ -500,7 +522,9 @@ class ImageProcessor:
                 top = row * cell_h
                 bottom = height if row == rows - 1 else (row + 1) * cell_h
                 box = (left, top, right, bottom)
+                
+                # Crop and load
                 part = img.crop(box)
-                result_parts.append((part, box))
-
-        return result_parts
+                part.load()
+                
+                yield part, box
