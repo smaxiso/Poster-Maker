@@ -1,0 +1,75 @@
+
+# Default configuration settings for the Poster Maker
+
+# Paths configuration
+paths:
+  # Base directory structure will be created under this path
+  base_output_dir: "data/image/output"
+  # Input images directory
+  input_dir: "data/image/input"
+
+# Image processing settings
+image:
+  # Default DPI for output images
+  default_dpi: 300
+  # Default number of parts to split the image into
+  default_parts: 3
+  # Default output format (leave empty to maintain original format)
+  default_format: ""
+  # Resampling method for resizing (options: LANCZOS, BICUBIC, BILINEAR, NEAREST)
+  resampling_method: "LANCZOS"
+  # Resize mode for images
+  resize_mode: "maintain"  # Options: maintain, stretch, crop, pad
+  pad_white: [ 255, 255, 255 ]  # White padding for pad mode (RGB)
+  pad_black: [ 0, 0, 0 ]  # Black padding for pad mode (RGB)
+  # A4 dimensions in various units
+  a4:
+    # inches
+    width_inches: 8.27
+    height_inches: 11.69
+    # millimeters
+    width_mm: 210
+    height_mm: 297
+
+# PDF generation settings
+pdf:
+  # Include features in generated PDFs
+  features:
+    page_numbers: false           # Add page numbers
+    assembly_aids: false          # Add corner marks and orientation indicators
+    part_dimensions: false        # Show part dimensions on page
+    grid_overlay: false           # Add a grid overlay on each part
+    bleed_marks: true            # Add bleed marks for printing
+    assembly_instructions: true   # Include a first page with assembly instructions
+    duplex_back_pages: true       # Add position info back-pages for duplex printing (default: on)
+  # Styling options
+  styling:
+    font_name: "Helvetica"
+    title_size: 12
+    subtitle_size: 8
+    margin_mm: 5            # Margin around the parts in mm
+    corner_marks_mm: 10     # Length of corner marks in mm
+  # Content options
+  content:
+    top_text: ""                # Text to show at top of page
+    add_timestamp: false        # Add creation timestamp
+    add_source_filename: false  # Show source filename
+  # File options
+  file:
+    prefix: ""              # Prefix for PDF filenames
+    suffix: "_complete"     # Suffix for PDF filenames
+  # Optimization options
+  optimization:
+    compress_images: true              # Use compression for images in PDF
+    compression_quality: 95            # JPEG quality (0-100) for compression
+    downsample_images: false           # Downsample images in PDF
+    downsample_resolution_dpi: 300     # Resolution to downsample to
+    use_jpeg_compression: true         # Use JPEG compression instead of default
+
+# Logging settings
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+  format: "%(asctime)s - %(levelname)s - %(name)s - %(funcName)s:%(lineno)d -- %(message)s"
+  date_format: "%Y-%m-%d %H:%M:%S"
+  file: "poster_maker_{{timestamp}}.log"  # Log file name with timestamp
+  log_folder: "logs"  # Directory to store log files
