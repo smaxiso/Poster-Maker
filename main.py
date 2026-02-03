@@ -18,6 +18,7 @@ from poster_maker.config.config_loader import ConfigLoader
 from poster_maker.utils.memory_service import MemoryService
 from poster_maker.core.image_processor import ImageProcessor
 from poster_maker.utils.display_service import DisplayService
+from poster_maker.utils.progress import TqdmProgressCallback, NoOpProgressCallback
 
 
 class PosterMakerApp:
@@ -212,8 +213,24 @@ class PosterMakerApp:
                 grid
             )
 
-            # Display warning and get user confirmation if needed
-            return self.memory_service.display_memory_warning(memory_estimate)
+            # Validate memory usage
+            is_safe, warning_msg = self.memory_service.validate_memory_safety(memory_estimate)
+            
+            if not is_safe:
+                print("\n" + warning_msg)
+                
+                # Check for forced confirmation (future feature) or interactive mode
+                # For now, we always ask in CLI unless forced via args (not yet implemented)
+                while True:
+                    response = input("\nContinue with this high-memory operation? (y/n): ").strip().lower()
+                    if response == 'y':
+                        return True
+                    elif response == 'n':
+                        print("Operation cancelled by user.")
+                        return False
+                    print("Please enter 'y' to continue or 'n' to cancel.")
+            
+            return True
 
         except Exception as e:
             # Log but continue if memory estimation fails
@@ -248,6 +265,9 @@ class PosterMakerApp:
             self.logger.info(f"Processing image {self.args.file} into {parts} parts at {self.args.dpi} DPI")
 
         resize_mode = getattr(self.args, 'resize_mode', "maintain")
+        
+        # Select progress callback based on verbose flag
+        progress_callback = TqdmProgressCallback(unit="part") if self.args.verbose else None
 
         result = self.image_processor.process_image(
             self.args.file,
@@ -259,6 +279,7 @@ class PosterMakerApp:
             resize_mode,
             self.args.verbose,
             grid=grid,
+            progress_callback=progress_callback
         )
 
         return result

@@ -82,15 +82,17 @@ class MemoryService:
             # If psutil isn't available, just return the estimated memory
             return total_memory_mb, None
 
-    def display_memory_warning(self, memory_estimate: Tuple[float, Optional[float]]) -> bool:
+    def validate_memory_safety(self, memory_estimate: Tuple[float, Optional[float]]) -> Tuple[bool, Optional[str]]:
         """
-        Display warning for high memory usage and ask for confirmation if necessary.
+        Validate memory usage and return warning if unsafe.
+        Does NOT prompt user (pure logic).
 
         Args:
             memory_estimate: Tuple of (estimated_memory_mb, memory_percentage)
 
         Returns:
-            bool: True if should continue, False if operation was cancelled
+            Tuple[bool, Optional[str]]: (is_safe, warning_message)
+            is_safe is False if memory is considered 'high' or 'very high'.
         """
         memory_mb, memory_percentage = memory_estimate
 
@@ -106,34 +108,22 @@ class MemoryService:
 
         if is_high_memory or is_high_percentage:
             # Prepare warning message
-            warning = [
+            warning_lines = [
                 f"Warning: This operation may require significant RAM during processing:",
                 f"• Estimated peak RAM usage: {memory_mb:.1f} MB ({memory_mb / 1024:.2f} GB)"
             ]
 
             if memory_percentage:
-                warning.append(f"• This represents approximately {memory_percentage:.1f}% of your system's RAM")
+                warning_lines.append(f"• This represents approximately {memory_percentage:.1f}% of your system's RAM")
 
-            # warning.append("Note: The final output files will be much smaller than this RAM estimate.")
-            warning.append("Consider reducing DPI or number of parts if you experience performance issues.")
-
-            # Log and print the warning
+            warning_lines.append("Consider reducing DPI or number of parts if you experience performance issues.")
+            
+            full_message = "\n".join(warning_lines)
+            
+            # Log the warning
             self.logger.warning(f"Estimated peak RAM usage is high: {memory_mb:.2f} MB" +
                                 (f" ({memory_percentage:.1f}% of system RAM)" if memory_percentage else ""))
+                                
+            return False, full_message
 
-            for line in warning:
-                print(line)
-
-            # For very high memory usage, ask for confirmation
-            if is_very_high_memory or (memory_percentage and memory_percentage > 70):
-                while True:
-                    response = input("\nContinue with this high-memory operation? (y/n): ").strip().lower()
-                    if response == 'y':
-                        return True
-                    elif response == 'n':
-                        print("Operation cancelled by user.")
-                        return False
-                    # If empty or invalid, loop again
-                    print("Please enter 'y' to continue or 'n' to cancel.")
-
-        return True
+        return True, None

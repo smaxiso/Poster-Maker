@@ -1,11 +1,12 @@
-
 import logging
 import os
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
 from PIL import Image
-from tqdm import tqdm
+
+if TYPE_CHECKING:
+    from poster_maker.utils.progress import ProgressCallback
 
 from poster_maker.core.file_manager import FileManager
 
@@ -82,16 +83,20 @@ class ImageProcessor:
         self.logger.debug(f"Grid ideal dimensions: {target_width}x{target_height} ({rows}×{cols} A4 cells)")
         return target_width, target_height
 
-    def resize_image(self, img: Image.Image, target_width: int, target_height: int,
-                     resize_mode: str = "maintain", verbose: bool = False) -> Image.Image:
+    def resize_image(
+        self,
+        img: Image.Image,
+        target_width: int,
+        target_height: int,
+        resize_mode: str = "maintain",
+        progress_callback: Optional["ProgressCallback"] = None,
+    ) -> Image.Image:
         """
-        Resize an image to target dimensions based on specified mode with interactive progress bar.
+        Resize image to target dimensions.
         """
         start_time = time.time()
-        if verbose:
-             import sys
-             print(f"Resizing image to {target_width}x{target_height}...", flush=True)
-
+        
+        # Log start of operation
         self.logger.info(
             f"Resizing image from {img.width}x{img.height} to {target_width}x{target_height} (mode: {resize_mode})")
 
@@ -103,14 +108,18 @@ class ImageProcessor:
         if target_height == 0 or target_width == 0:
             raise ValueError(f"Invalid target dimensions: {target_width}x{target_height}")
 
-        # Only show progress bar if verbose is True
-        if verbose:
-            # Show elapsed time instead of fake percentages (PIL resize can't report real progress)
-            with tqdm(total=100, desc="Resizing image", unit="%", bar_format='{desc}: {elapsed}') as pbar:
-                img_resized = self._do_resize(img, target_width, target_height, resize_mode)
-                pbar.update(100)
-        else:
-            img_resized = self._do_resize(img, target_width, target_height, resize_mode)
+        # Show indeterminate progress if callback provided
+        if progress_callback:
+            progress_callback.on_start(100, "Resizing image")
+            # Creating a fake progress since PIL doesn't report it
+            # We just show start and then complete
+            progress_callback.on_update(10, "Processing...")
+
+        img_resized = self._do_resize(img, target_width, target_height, resize_mode)
+        
+        if progress_callback:
+            progress_callback.on_update(100, "Done")
+            progress_callback.on_complete()
 
         elapsed_time = time.time() - start_time
         self.logger.debug(f"Resizing completed in {elapsed_time:.2f} seconds")
@@ -189,17 +198,16 @@ class ImageProcessor:
     def split_and_save_parts(
         self,
         img_resized: Image.Image,
-        split_parts_generator: Any,  # Iterator[Tuple[Image.Image, Tuple[int...]]]
+        split_parts_generator: Any,
         total_parts: int,
         filename: str,
         posters_dir: str,
         ext: str,
         output_format: Optional[str] = None,
-        verbose: bool = False,
+        progress_callback: Optional["ProgressCallback"] = None,
     ) -> Tuple[List[str], List[Tuple[int, int, int, int]]]:
         """
-        Split image and save parts with optional progress bar.
-        Consumes the generator one by one to save memory.
+        Split image and save parts.
 
         Returns:
             Tuple[List[str], List[Tuple[int, int, int, int]]]: (output_paths, crop_boxes)
@@ -207,46 +215,36 @@ class ImageProcessor:
         output_paths: List[str] = []
         crop_boxes: List[Tuple[int, int, int, int]] = []
 
-        if verbose:
-            # Progress bar
-            with tqdm(total=total_parts, desc="Creating poster parts", unit="part") as pbar:
-                for i, (part, box) in enumerate(split_parts_generator, 1):
-                    pbar.set_description(f"Creating part {i}/{total_parts}")
+        # Initialize progress if callback provided
+        if progress_callback:
+            progress_callback.on_start(total_parts, "Creating poster parts")
 
-                    output_path = self.file_manager.get_output_path(
-                        posters_dir, filename, part=i, ext=ext, output_format=output_format
-                    )
+        for i, (part, box) in enumerate(split_parts_generator, 1):
+            if progress_callback:
+                progress_callback.on_update(0, message=f"Creating part {i}/{total_parts}")
 
-                    self._save_image_optimized(part, output_path)
-                    pbar.update(1)
-                    output_paths.append(output_path)
-                    crop_boxes.append(box)
+            output_path = self.file_manager.get_output_path(
+                posters_dir, filename, part=i, ext=ext, output_format=output_format
+            )
 
-                    # Log info but don't display on console during progress
-                    self.logger.info(f"Saved part {i}/{total_parts}: {output_path} ({part.width}x{part.height} pixels)")
-                    
-                    # Explicitly close and delete the part to free memory immediately
-                    part.close()
-                    del part
-        else:
-            # No progress bar when not in verbose mode
-            for i, (part, box) in enumerate(split_parts_generator, 1):
-                output_path = self.file_manager.get_output_path(
-                    posters_dir, filename, part=i, ext=ext, output_format=output_format
-                )
+            self._save_image_optimized(part, output_path)
+            output_paths.append(output_path)
+            crop_boxes.append(box)
 
-                # Save the part with optimized settings
-                self._save_image_optimized(part, output_path)
-                output_paths.append(output_path)
-                crop_boxes.append(box)
+            # Log info
+            self.logger.info(f"Saved part {i}/{total_parts}: {output_path} ({part.width}x{part.height} pixels)")
 
-                # Log with print since not in verbose mode
-                self.logger.info(f"Saved part {i}/{total_parts}: {output_path} ({part.width}x{part.height} pixels)")
-                print(f"Saved part {i}/{total_parts}: {output_path}")
-                
-                # Explicitly close and delete
-                part.close()
-                del part
+            # Explicitly close and delete to free memory
+            part.close()
+            del part
+            
+            # Update progress
+            if progress_callback:
+                progress_callback.on_update(1)
+
+        # Finish progress
+        if progress_callback:
+            progress_callback.on_complete()
 
         return output_paths, crop_boxes
 
@@ -261,6 +259,7 @@ class ImageProcessor:
         resize_mode: str = "maintain",
         verbose: bool = False,
         grid: Optional[Tuple[int, int]] = None,
+        progress_callback: Optional["ProgressCallback"] = None,
     ) -> Dict[str, Any]:
         """
         Process an image: resize, split, and save parts.
@@ -275,6 +274,7 @@ class ImageProcessor:
             resize_mode: How to handle aspect ratio
             verbose: Whether to enable verbose logging
             grid: If set, (rows, cols) for 2D grid split; else 1D strip
+            progress_callback: Optional callback for progress reporting
 
         Returns:
             Dict[str, Any]: Dictionary with output paths and process summary
@@ -353,7 +353,7 @@ class ImageProcessor:
         resize_start = time.time()
 
         # Resize image to the ideal dimensions with high quality
-        img_resized = self.resize_image(img, target_width, target_height, resize_mode, verbose)
+        img_resized = self.resize_image(img, target_width, target_height, resize_mode, progress_callback)
         width, height = img_resized.size
 
         # Update timing information
@@ -365,8 +365,8 @@ class ImageProcessor:
         )
 
         # Save with progress indication (large images can take 20-30s)
-        if verbose:
-            print("Saving resized image (this may take a moment for large images)...")
+        # Save with progress indication
+        # Note: Resizing is a single step, so we assume the caller handles "indeterminate" loading state
         self._save_image_optimized(img_resized, resized_path)
         self.logger.info(f"Saved resized image: {resized_path}")
 
@@ -402,7 +402,7 @@ class ImageProcessor:
         # Use the improved split and save function
         save_start = time.time()
         output_paths["parts"], crop_boxes = self.split_and_save_parts(
-            img_resized, split_parts_generator, total_parts, filename, posters_dir, ext, output_format, verbose
+            img_resized, split_parts_generator, total_parts, filename, posters_dir, ext, output_format, progress_callback
         )
         summary["timing"]["save_parts_seconds"] = round(time.time() - save_start, 2)
 

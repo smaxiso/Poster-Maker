@@ -937,9 +937,9 @@ class PDFService:
 
         except subprocess.CalledProcessError as e:
             self.logger.error(f"Failed to open PDF: {e}")
-            print(f"\n⚠️  Could not automatically open the PDF: {e}")
-            print(f"   Please open this file manually: {pdf_path}")
+            self.logger.warning(f"⚠️  Could not automatically open the PDF: {e}")
+            self.logger.warning(f"   Please open this file manually: {pdf_path}")
         except Exception as e:
             self.logger.error(f"Failed to open PDF: {str(e)}")
-            print(f"\n⚠️  Could not automatically open the PDF: {str(e)}")
-            print(f"   Please open this file manually: {pdf_path}")
+            self.logger.warning(f"⚠️  Could not automatically open the PDF: {str(e)}")
+            self.logger.warning(f"   Please open this file manually: {pdf_path}")
