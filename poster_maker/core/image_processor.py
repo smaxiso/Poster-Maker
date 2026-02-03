@@ -136,8 +136,13 @@ class ImageProcessor:
         aspect_ratio = orig_width / orig_height
         target_ratio = target_width / target_height
 
-        if resize_mode in ["maintain", "stretch"]:
+        if resize_mode == "stretch":
             return img.resize((target_width, target_height), self.resampling_method, reducing_gap=3.0)
+            
+        elif resize_mode == "maintain":
+             # Fix: "Maintain" should default to "pad_white" (Letterboxing) to preserve the whole image
+             # Original behavior was 'stretch', which caused issues.
+             return self._do_resize(img, target_width, target_height, "pad_white")
 
         elif resize_mode == "crop":
             if aspect_ratio > target_ratio:
@@ -260,6 +265,7 @@ class ImageProcessor:
         verbose: bool = False,
         grid: Optional[Tuple[int, int]] = None,
         progress_callback: Optional["ProgressCallback"] = None,
+        **kwargs: Any
     ) -> Dict[str, Any]:
         """
         Process an image: resize, split, and save parts.
@@ -325,6 +331,24 @@ class ImageProcessor:
         except Exception as e:
             self.logger.error(f"Invalid or corrupted image: {e}")
             raise
+
+        # Apply transformations (Rotate/Flip) if requested
+        # Note: args passed in **kwargs via process_image signature update for cleaner API
+        rotation = kwargs.get("rotation", 0)
+        flip_horizontal = kwargs.get("flip_horizontal", False)
+        flip_vertical = kwargs.get("flip_vertical", False)
+
+        if rotation:
+            self.logger.info(f"Rotating image by {rotation} degrees")
+            img = img.rotate(-rotation, expand=True) # Negative for clockwise
+
+        if flip_horizontal:
+            self.logger.info("Flipping image horizontally")
+            img = img.transpose(Image.FLIP_LEFT_RIGHT)
+            
+        if flip_vertical:
+            self.logger.info("Flipping image vertically")
+            img = img.transpose(Image.FLIP_TOP_BOTTOM)
 
         width, height = img.size
         self.logger.info(f"Image dimensions: {width}x{height} pixels")
